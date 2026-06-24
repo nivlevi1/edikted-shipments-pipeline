@@ -1,0 +1,5 @@
+version: 2
+
+models:
+  - name: fact_shipments
+    description: "Final shipments table with corrected join_order_id and join_order_name"

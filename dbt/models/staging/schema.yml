@@ -1,0 +1,5 @@
+version: 2
+
+models:
+  - name: stg_shipments
+    description: "Cleaned and typed shipments from raw.shipments"
