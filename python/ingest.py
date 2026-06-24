@@ -11,14 +11,6 @@ BUCKET = os.environ["AWS_S3_BUCKET"]
 PREFIX = os.environ["AWS_S3_PREFIX"]
 POSTGRES_CONN = os.environ["POSTGRES_CONN"]
 
-_JSON_RENAMES = {
-    "inserdatetime": "insert_datetime",
-    "_warehouse_invoice": "warehouse_invoice",
-    "_warehouse_fees": "warehouse_fees",
-    "address": "main_address",
-}
-
-
 def _fix_malformed_json(raw_bytes: bytes) -> bytes:
     fixed = raw_bytes.replace(b"\x27\x27\x27\x27", b"")
     fixed = fixed.replace(b"\x5c\x6e", b" ")
@@ -40,12 +32,12 @@ def parse_json_gz(data: bytes, filename: str) -> pd.DataFrame:
         print(f"{filename}: malformed JSON — attempting repair")
         records = json.loads(_fix_malformed_json(raw))
     df = pd.DataFrame(records, dtype=str)
-    df.rename(columns=_JSON_RENAMES, inplace=True)
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
 
 
 def parse_csv(data: bytes, filename: str) -> pd.DataFrame:
-    is_gz = filename.endswith(".gz")
+    is_gz = filename.endswith(".gz") or filename.endswith(".zhtml")
     raw = gzip.decompress(data) if is_gz else data
     if _is_html(raw):
         print(f"{filename}: detected as HTML, skipping")
@@ -56,6 +48,15 @@ def parse_csv(data: bytes, filename: str) -> pd.DataFrame:
         dtype=str,
         keep_default_na=False,
     )
+
+
+def _table_name(filename: str) -> str:
+    name = filename
+    for ext in (".csv.gz", ".json.gz", ".csv", ".json", ".zhtml"):
+        if name.endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name
 
 
 def main():
@@ -70,7 +71,6 @@ def main():
     ]
     print(f"Found {len(keys)} objects in s3://{BUCKET}/{PREFIX}")
 
-    frames = []
     for key in keys:
         filename = key.split("/")[-1]
         if not filename:
@@ -80,7 +80,7 @@ def main():
 
         if filename.endswith(".json.gz"):
             df = parse_json_gz(data, filename)
-        elif filename.endswith(".csv.gz") or filename.endswith(".csv"):
+        elif filename.endswith(".csv.gz") or filename.endswith(".csv") or filename.endswith(".zhtml"):
             df = parse_csv(data, filename)
         else:
             print(f"Unknown type, skipping: {filename}")
@@ -90,25 +90,9 @@ def main():
             continue
 
         df["_source_file"] = filename
-        frames.append(df)
-        print(f"  {len(df):,} rows from {filename}")
-
-    if not frames:
-        print("No data loaded from S3")
-        return
-
-    combined = pd.concat(frames, ignore_index=True)
-    print(f"Total: {len(combined):,} rows, {len(combined.columns)} columns")
-
-    combined.to_sql(
-        "shipments",
-        engine,
-        schema="raw",
-        if_exists="replace",
-        index=False,
-        chunksize=10_000,
-    )
-    print("Loaded into raw.shipments ✓")
+        table = _table_name(filename)
+        df.to_sql(table, engine, schema="raw", if_exists="replace", index=False, chunksize=10_000)
+        print(f"  {len(df):,} rows → raw.{table}")
 
 
 if __name__ == "__main__":

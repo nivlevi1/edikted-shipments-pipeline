@@ -4,5 +4,9 @@ sources:
   - name: raw
     schema: raw
     tables:
-      - name: shipments
-        description: "Raw shipments loaded from S3 (CSV + JSON unified)"
+      - name: edikted_112412
+      - name: edikted_212412
+      - name: edikted_212423
+      - name: background_image
+      - name: edikted_1sa112
+      - name: edikted_1sa122
