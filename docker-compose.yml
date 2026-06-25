@@ -18,6 +18,9 @@ services:
     env_file: .env
     environment:
       POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+      SRC_DIR: /app/src
+    volumes:
+      - ./src:/app/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,6 +43,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  jupyter:
+    image: jupyter/scipy-notebook:latest
+    ports:
+      - "8888:8888"
+    environment:
+      POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      bash -c "pip install psycopg2-binary -q &&
+      start-notebook.sh
+      --NotebookApp.token=''
+      --NotebookApp.password=''"
 
 volumes:
   postgres_data:

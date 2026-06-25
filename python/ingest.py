@@ -2,14 +2,14 @@ import gzip
 import io
 import json
 import os
+from pathlib import Path
 
-import boto3
 import pandas as pd
 from sqlalchemy import create_engine
 
-BUCKET = os.environ["AWS_S3_BUCKET"]
-PREFIX = os.environ["AWS_S3_PREFIX"]
+SRC_DIR      = Path(os.environ.get("SRC_DIR", "/app/src"))
 POSTGRES_CONN = os.environ["POSTGRES_CONN"]
+
 
 def _fix_malformed_json(raw_bytes: bytes) -> bytes:
     fixed = raw_bytes.replace(b"\x27\x27\x27\x27", b"")
@@ -60,23 +60,14 @@ def _table_name(filename: str) -> str:
 
 
 def main():
-    s3 = boto3.client("s3")
     engine = create_engine(POSTGRES_CONN)
 
-    paginator = s3.get_paginator("list_objects_v2")
-    keys = [
-        obj["Key"]
-        for page in paginator.paginate(Bucket=BUCKET, Prefix=PREFIX)
-        for obj in page.get("Contents", [])
-    ]
-    print(f"Found {len(keys)} objects in s3://{BUCKET}/{PREFIX}")
+    files = sorted(SRC_DIR.iterdir())
+    print(f"Found {len(files)} files in {SRC_DIR}")
 
-    for key in keys:
-        filename = key.split("/")[-1]
-        if not filename:
-            continue
-        print(f"Downloading {key}")
-        data = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+    for path in files:
+        filename = path.name
+        data = path.read_bytes()
 
         if filename.endswith(".json.gz"):
             df = parse_json_gz(data, filename)
