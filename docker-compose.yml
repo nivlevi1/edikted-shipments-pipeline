@@ -56,7 +56,7 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      bash -c "pip install psycopg2-binary -q &&
+      bash -c "pip install psycopg2-binary pandera -q &&
       start-notebook.sh
       --NotebookApp.token=''
       --NotebookApp.password=''"

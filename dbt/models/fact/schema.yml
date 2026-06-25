@@ -2,4 +2,420 @@ version: 2
 
 models:
   - name: fact_shipments
-    description: "Final shipments table with corrected join_order_id and join_order_name"
+    description: >
+      Final shipments fact table. Inherits all 92 columns from stg_shipments and adds
+      2 corrected join key columns.
+
+      Fix implemented (Finding #2 — see notebooks/data_profile.ipynb):
+        join_order_id and join_order_name in the source are wrong for 100% of rows.
+        The source system used an unknown formula — the correct derivation is:
+          join_order_id_fixed   = coalesce(order_id, order_name)
+          join_order_name_fixed = coalesce(coalesce(order_id, order_name), '0000066600000')
+
+        The original broken columns are preserved in this model for lineage traceability.
+        All downstream joins on order ID MUST use the _fixed columns.
+
+    tests:
+      # join_order_id_fixed must equal coalesce(order_id, order_name)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "join_order_id_fixed = coalesce(order_id, order_name)"
+          config:
+            severity: error
+
+      # join_order_name_fixed must equal coalesce(coalesce(order_id, order_name), '0000066600000')
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "join_order_name_fixed = coalesce(coalesce(order_id, order_name), '0000066600000')"
+          config:
+            severity: error
+
+    columns:
+      # ── corrected join keys (added in fact) ───────────────────────────────────
+      - name: join_order_id_fixed
+        description: >
+          Corrected order join key: coalesce(order_id, order_name).
+          Prefers order_id (CSV sources); falls back to order_name (JSON sources).
+          Replaces join_order_id which is 0% accurate in the source.
+          Use this column for all shipment-to-order joins.
+        tests:
+          - not_null
+
+      - name: join_order_name_fixed
+        description: >
+          Corrected order name join key: coalesce(coalesce(order_id, order_name), '0000066600000').
+          Falls back to the sentinel value '0000066600000' when both order_id and order_name are NULL.
+          Replaces join_order_name which is 0% accurate in the source.
+        tests:
+          - not_null
+
+      # ── inherited identity ─────────────────────────────────────────────────
+      - name: '"ID"'
+        description: "Row ID from source CSV (positional) or ROW_NUMBER() surrogate for JSON sources."
+        tests:
+          - not_null
+
+      - name: source_file
+        description: "Carrier export filepath — traces row to its origin file."
+        tests:
+          - not_null
+
+      - name: _source_file
+        description: "S3 key of the file loaded by the Python ingest layer."
+        tests:
+          - not_null
+
+      - name: insert_datetime
+        description: "Timestamp row was inserted into the carrier's export system."
+
+      # ── carrier / service ──────────────────────────────────────────────────
+      - name: carrier
+        description: "Shipping carrier (UPS, FedEx, DHL, USPS)."
+        tests:
+          - not_null
+
+      - name: service
+        description: "Carrier service level (ground, air, express, etc.)."
+        tests:
+          - not_null
+
+      - name: transportation_type
+        description: "Mode of transportation."
+        tests:
+          - not_null
+
+      - name: transportation
+        description: >
+          Transportation sub-field — should be NULL for all rows.
+          Drifted rows where this held a datetime value were removed in staging.
+
+      # ── financial ─────────────────────────────────────────────────────────
+      - name: total_charge
+        description: >
+          Total carrier invoice charge (USD). Capped at $100 in this synthetic dataset.
+          Zero-charge rows (11 total) are valid — free/promotional shipments.
+        tests:
+          - not_null
+      - name: total_credit
+        description: "Credit applied against the invoice — fully nullable."
+
+      - name: carriers_fees
+        description: "Carrier surcharge and fee total."
+        tests:
+          - not_null
+
+      - name: weight_billable
+        description: "Billable weight (may differ from actual due to DIM rules)."
+        tests:
+          - not_null
+
+      - name: weight_lbs
+        description: "Actual parcel weight in pounds. Capped at 20 lbs in synthetic data."
+        tests:
+          - not_null
+
+      - name: warehouse_invoice
+        description: "Warehouse invoice reference — ~2% missing."
+
+      - name: warehouse_fees
+        description: "Warehouse handling fees — fully nullable."
+
+      - name: shipping_paid_by_customer
+        description: "Shipping cost charged to customer — fully nullable."
+
+      - name: shipping_subsidies
+        description: "Shipping subsidy from Edikted — fully nullable."
+
+      - name: duties_paid_by_customer
+        description: "Customs duties billed to customer — fully nullable."
+
+      - name: declared_value
+        description: "Declared package value for customs/insurance — fully nullable."
+
+      - name: check_amount
+        description: "Payment check amount — fully nullable."
+
+      - name: check_num
+        description: "Payment check number — fully nullable."
+
+      - name: check_reference
+        description: "Payment check reference — fully nullable."
+
+      - name: values
+        description: "Miscellaneous values field — fully nullable."
+
+      # ── surcharges ─────────────────────────────────────────────────────────
+      - name: extra_length_surcharge
+        description: "Length overage surcharge — fully nullable."
+
+      - name: oversize_charge
+        description: "Oversize parcel surcharge — fully nullable."
+
+      - name: out_of_delivery_area_tier_b
+        description: "Out-of-delivery-area tier B surcharge — fully nullable."
+
+      - name: clearance_end_use_fee
+        description: "Customs clearance fee — fully nullable."
+
+      - name: customs
+        description: "Customs charge — fully nullable."
+
+      - name: extra
+        description: "Miscellaneous extra charge — fully nullable."
+
+      - name: dimensional
+        description: "Dimensional weight surcharge — fully nullable."
+
+      - name: peak
+        description: "Peak season surcharge — fully nullable."
+
+      - name: das
+        description: "Delivery area surcharge base — fully nullable."
+
+      - name: fuel
+        description: "Fuel surcharge — fully nullable."
+
+      - name: non_standard_length
+        description: "Non-standard length charge — fully nullable."
+
+      - name: additional_tax_administration_duty_kor
+        description: "Korean import duty admin fee — fully nullable."
+
+      - name: addl_handling_weight
+        description: "Additional handling surcharge (weight basis) — fully nullable."
+
+      - name: additional_weight_charge_ground_shipmen
+        description: "Additional weight charge for ground shipments — fully nullable."
+
+      - name: delivery_confirmation_signature
+        description: "Signature/confirmation fee — fully nullable."
+
+      - name: hst_harmonized_sales_tax_duty
+        description: "Canadian HST — fully nullable."
+
+      - name: returns_print_label
+        description: "Return label print fee — fully nullable."
+
+      - name: additional_handling_charge_weight
+        description: "Overweight additional handling charge — fully nullable."
+
+      - name: british_columbia_pst
+        description: "BC provincial sales tax — fully nullable."
+
+      - name: not_previously_billed_remote_area_surcharge
+        description: "Previously unbilled remote area surcharge — fully nullable."
+
+      - name: same_day_pickup_alternate_address_web_request
+        description: "Same-day pickup / alternate address fee — fully nullable."
+
+      - name: delivery_area_surcharge_intra_hawaii_r
+        description: "Intra-Hawaii DAS — fully nullable."
+
+      - name: delivery_area_surcharge_alaska
+        description: "Alaska DAS — fully nullable."
+
+      - name: additional_handling_charge_dimensions
+        description: "Dimensional additional handling charge — fully nullable."
+
+      - name: additional_handling_length_girth
+        description: >
+          Additional handling surcharge for length+girth overages.
+          Blank values ('') indicate drifted rows — all removed in staging.
+          No blank values should exist in this model.
+
+      # ── order ─────────────────────────────────────────────────────────────
+      - name: order_id
+        description: "Shopify order ID (CSV sources). 10 order_ids appear in multiple sources — confirmed distinct shipments."
+        tests:
+          - not_null
+
+      - name: order_name
+        description: "Shopify order name, e.g. #1234 (JSON sources). Used as fallback in join_order_id_fixed."
+
+      - name: order_type
+        description: "Order fulfillment type."
+        tests:
+          - not_null
+
+      - name: order_date
+        description: "Date order was placed in Shopify."
+        tests:
+          - not_null
+
+      - name: otype
+        description: "Short-form order type code."
+        tests:
+          - not_null
+
+      - name: ordernum_ponum
+        description: "Combined order / PO number."
+        tests:
+          - not_null
+
+      - name: po_num
+        description: "Purchase order number."
+        tests:
+          - not_null
+
+      - name: ge_ordernum
+        description: "GE WMS order number."
+        tests:
+          - not_null
+
+      - name: shopify_order_date
+        description: "Shopify order creation date."
+        tests:
+          - not_null
+
+      - name: shopify_order_type
+        description: "Order type as recorded in Shopify."
+        tests:
+          - not_null
+
+      - name: join_order_id
+        description: >
+          BROKEN — 0% accurate in source. Do not use.
+          Use join_order_id_fixed instead.
+
+      - name: join_order_name
+        description: >
+          BROKEN — 0% accurate in source. Do not use.
+          Use join_order_name_fixed instead.
+
+      - name: is_replacement_order
+        description: "Replacement shipment flag — ~1% of rows."
+
+      # ── tracking ──────────────────────────────────────────────────────────
+      - name: tracking_number
+        description: "Carrier tracking number. Synthetic 8-char format in this dataset."
+        tests:
+          - not_null
+          - unique:
+              config:
+                severity: warn
+
+      - name: trackingnum
+        description: "Alternate tracking field — fully nullable."
+
+      - name: reference_1
+        description: "Customer reference 1."
+        tests:
+          - not_null
+
+      - name: reference_2
+        description: "Customer reference 2."
+        tests:
+          - not_null
+
+      - name: pick_ticket
+        description: "Warehouse pick ticket — fully nullable."
+
+      - name: parcel_codes
+        description: "Internal parcel codes — fully nullable."
+
+      - name: invalid_accountnum
+        description: "Invalid account number flag — fully nullable."
+
+      # ── receiver ──────────────────────────────────────────────────────────
+      - name: receiver_name
+        description: "Recipient full name."
+        tests:
+          - not_null
+
+      - name: receiver_company_name
+        description: "Recipient company name."
+        tests:
+          - not_null
+
+      - name: receiver_address1
+        description: "Recipient primary address line."
+        tests:
+          - not_null
+
+      - name: receiver_address_1
+        description: "Duplicate address field — fully nullable."
+
+      - name: receiver_address_2
+        description: "Secondary address line — fully nullable."
+
+      - name: receiver_city
+        description: "Recipient city."
+        tests:
+          - not_null
+
+      - name: receiver_state
+        description: "Recipient state/province (2-letter)."
+        tests:
+          - not_null
+
+      - name: receiver_postal_code
+        description: "Recipient ZIP/postal code."
+        tests:
+          - not_null
+
+      - name: receiver_country
+        description: "Recipient country code (ISO 2-letter)."
+        tests:
+          - not_null
+
+      - name: main_address
+        description: "Full formatted recipient address. Named 'address' in JSON sources."
+        tests:
+          - not_null
+
+      - name: customer
+        description: "Customer identifier — fully nullable."
+
+      - name: customer_name
+        description: "Customer display name — ~10% missing."
+
+      - name: customer_num
+        description: "Customer number — fully nullable."
+
+      # ── sender ────────────────────────────────────────────────────────────
+      - name: sender_name
+        description: "Sender name."
+        tests:
+          - not_null
+
+      - name: sender_company_name
+        description: "Sender company name."
+        tests:
+          - not_null
+
+      # ── invoice ───────────────────────────────────────────────────────────
+      - name: invoice_date
+        description: "Carrier invoice date."
+        tests:
+          - not_null
+
+      - name: invoice_num
+        description: "Invoice number — ~4% missing."
+
+      - name: invoice_number
+        description: "Alternate invoice number field — ~4% missing."
+
+      - name: zone
+        description: "Carrier shipping zone — fully nullable."
+
+      # ── logistics ─────────────────────────────────────────────────────────
+      - name: count_parcels
+        description: "Number of parcels in this shipment."
+        tests:
+          - not_null
+
+      - name: package_dimensions
+        description: "Package L x W x H string — fully nullable."
+
+      - name: date_received_in_hub
+        description: "Date parcel received at carrier hub."
+        tests:
+          - not_null
+
+      - name: date
+        description: "Generic date field — semantics vary by carrier."
+        tests:
+          - not_null
+
+      - name: received
+        description: "Received flag/date — fully nullable."
