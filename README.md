@@ -10,6 +10,8 @@ The processed data is exposed through a **Streamlit analytics dashboard** (KPIs,
 
 ## Architecture
 
+> Click on any diagram to view it in full resolution.
+
 ### End-to-End ELT
 
 ![End-to-End ELT Architecture](photos/architecture_elt.png)
