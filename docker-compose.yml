@@ -1,23 +1,27 @@
 services:
   postgres:
     image: postgres:15
-    env_file: .env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: warehouse
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "pg_isready -U postgres -d warehouse"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
 
   python:
     build: ./python
     env_file: .env
     environment:
-      POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+      POSTGRES_CONN: postgresql://postgres:postgres@postgres:5432/warehouse
       SRC_DIR: /app/src
     volumes:
       - ./src:/app/src
@@ -27,22 +31,21 @@ services:
 
   dbt:
     build: ./dbt
-    env_file: .env
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: warehouse
     volumes:
       - ./dbt:/dbt
     depends_on:
-      - python
+      postgres:
+        condition: service_healthy
 
   api:
     build: ./app/api
-    env_file: .env
     environment:
-      POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+      POSTGRES_CONN: postgresql://postgres:postgres@postgres:5432/warehouse
     ports:
       - "7654:7654"
     depends_on:
@@ -51,9 +54,8 @@ services:
 
   dashboard:
     build: ./app/dashboard
-    env_file: .env
     environment:
-      POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+      POSTGRES_CONN: postgresql://postgres:postgres@postgres:5432/warehouse
       API_BASE: http://api:7654
     ports:
       - "8501:8501"
@@ -74,21 +76,17 @@ services:
         condition: service_healthy
 
   jupyter:
-    image: jupyter/scipy-notebook:latest
+    build: ./jupyter
     ports:
       - "8888:8888"
     environment:
-      POSTGRES_CONN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-warehouse}
+      POSTGRES_CONN: postgresql://postgres:postgres@postgres:5432/warehouse
     volumes:
       - ./notebooks:/home/jovyan/work
     depends_on:
       postgres:
         condition: service_healthy
-    command: >
-      bash -c "pip install psycopg2-binary pandera -q &&
-      start-notebook.sh
-      --NotebookApp.token=''
-      --NotebookApp.password=''"
+    command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''
 
 volumes:
   postgres_data:

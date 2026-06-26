@@ -17,9 +17,11 @@ build/
 dbt/target/
 dbt/logs/
 dbt/.user.yml
+dbt/dbt_packages/
+dbt/package-lock.yml
+
+# Jupyter
+notebooks/.ipynb_checkpoints/
 
 # Docker
 *.log
-
-# Raw S3 data (downloaded locally, not source-controlled)
-src/

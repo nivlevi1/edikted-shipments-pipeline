@@ -777,21 +777,62 @@ with tab3:
     # ── US State Map ──────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">🗺 Shipments by US State</div>', unsafe_allow_html=True)
 
-    # No country filter — let choropleth match 2-letter codes naturally
-    where_map, p_map = build_where(
-        extra_conds=["receiver_state IS NOT NULL", "LENGTH(TRIM(receiver_state)) = 2"]
-    )
+    _STATE_ABBR = {
+        "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA",
+        "Colorado":"CO","Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA",
+        "Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA",
+        "Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME","Maryland":"MD",
+        "Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS",
+        "Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH",
+        "New Jersey":"NJ","New Mexico":"NM","New York":"NY","North Carolina":"NC",
+        "North Dakota":"ND","Ohio":"OH","Oklahoma":"OK","Oregon":"OR","Pennsylvania":"PA",
+        "Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD","Tennessee":"TN",
+        "Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA",
+        "West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC",
+    }
+
+    where_map, p_map = build_where(extra_conds=["receiver_state IS NOT NULL"])
     state_df = query(
         f"""
-        SELECT UPPER(TRIM(receiver_state)) AS state,
-               COUNT(*)                   AS shipments,
+        SELECT TRIM(receiver_state) AS state_raw,
+               COUNT(*)             AS shipments,
                ROUND(SUM(total_charge)::numeric, 2) AS total_charge
         FROM fact.fact_shipments {where_map}
-        GROUP BY UPPER(TRIM(receiver_state))
+        GROUP BY TRIM(receiver_state)
         ORDER BY shipments DESC
         """,
         p_map,
     )
+
+    if not state_df.empty:
+        def _to_abbr(v):
+            v = str(v).strip()
+            if len(v) == 2:
+                return v.upper()
+            return _STATE_ABBR.get(v)
+
+        state_df["state"] = state_df["state_raw"].apply(_to_abbr)
+        state_df = (
+            state_df[state_df["state"].notna()]
+            .groupby("state", as_index=False)[["shipments", "total_charge"]]
+            .sum()
+        )
+
+    _STATE_CENTERS = {
+        "AL":(32.8,-86.8),"AK":(64.2,-153.4),"AZ":(34.3,-111.1),"AR":(34.8,-92.2),
+        "CA":(37.2,-119.5),"CO":(39.0,-105.5),"CT":(41.6,-72.7),"DE":(39.0,-75.5),
+        "FL":(28.1,-81.6),"GA":(32.7,-83.4),"HI":(20.9,-157.0),"ID":(44.4,-114.6),
+        "IL":(40.0,-89.2),"IN":(39.9,-86.3),"IA":(42.1,-93.5),"KS":(38.5,-98.4),
+        "KY":(37.5,-85.3),"LA":(31.0,-91.8),"ME":(45.4,-69.2),"MD":(39.0,-76.8),
+        "MA":(42.3,-71.8),"MI":(44.3,-85.4),"MN":(46.3,-94.3),"MS":(32.7,-89.7),
+        "MO":(38.4,-92.3),"MT":(47.0,-110.0),"NE":(41.5,-99.9),"NV":(39.3,-116.6),
+        "NH":(43.7,-71.6),"NJ":(40.1,-74.5),"NM":(34.4,-106.1),"NY":(42.9,-75.5),
+        "NC":(35.5,-79.4),"ND":(47.5,-100.5),"OH":(40.4,-82.8),"OK":(35.6,-96.9),
+        "OR":(43.9,-120.6),"PA":(40.9,-77.8),"RI":(41.7,-71.5),"SC":(33.8,-80.9),
+        "SD":(44.4,-100.2),"TN":(35.8,-86.3),"TX":(31.1,-97.6),"UT":(39.3,-111.1),
+        "VT":(44.1,-72.7),"VA":(37.5,-78.5),"WA":(47.4,-120.5),"WV":(38.6,-80.6),
+        "WI":(44.3,-89.8),"WY":(43.0,-107.6),"DC":(38.9,-77.0),
+    }
 
     if not state_df.empty:
         map_metric = st.radio("Color by", ["shipments", "total_charge"], horizontal=True)
@@ -805,33 +846,41 @@ with tab3:
             hover_data=["shipments", "total_charge"],
             title=f"US Shipments by State — {map_metric}",
         )
+        # overlay value labels at state centers
+        lats, lons, texts = [], [], []
+        for _, row in state_df.iterrows():
+            center = _STATE_CENTERS.get(row["state"])
+            if center:
+                lats.append(center[0])
+                lons.append(center[1])
+                val = int(row[map_metric]) if map_metric == "shipments" else f"${row[map_metric]:,.0f}"
+                texts.append(str(val))
+        import plotly.graph_objects as go
+        fig_map.add_trace(go.Scattergeo(
+            lat=lats, lon=lons, text=texts,
+            mode="text",
+            textfont=dict(size=9, color="black"),
+            hoverinfo="skip",
+            showlegend=False,
+        ))
         fig_map.update_layout(margin=dict(t=40, b=0))
         st.plotly_chart(fig_map, use_container_width=True)
-        st.caption(f"{len(state_df)} states found. Only 2-letter US state codes shown.")
+        st.caption(f"{len(state_df)} states found.")
         sql_expander(
             f"""
-SELECT UPPER(TRIM(receiver_state)) AS state,
-       COUNT(*)                    AS shipments,
+SELECT TRIM(receiver_state) AS state_raw,
+       COUNT(*)             AS shipments,
        ROUND(SUM(total_charge)::numeric, 2) AS total_charge
 FROM fact.fact_shipments
 WHERE "date" BETWEEN '{start_d}' AND '{end_d}'
   AND receiver_state IS NOT NULL
-  AND LENGTH(TRIM(receiver_state)) = 2
-GROUP BY UPPER(TRIM(receiver_state))
+GROUP BY TRIM(receiver_state)
 ORDER BY shipments DESC
+-- full state names mapped to 2-letter codes in Python
             """
         )
     else:
-        st.info("No 2-letter state codes found in current filter window.")
-        # Debug: show distinct state values
-        where_dbg, p_dbg = build_where(extra_conds=["receiver_state IS NOT NULL"])
-        sample_states = query(
-            f"SELECT DISTINCT receiver_state FROM fact.fact_shipments {where_dbg} LIMIT 20",
-            p_dbg,
-        )
-        if not sample_states.empty:
-            st.caption("Sample receiver_state values in data:")
-            st.write(sample_states["receiver_state"].tolist())
+        st.info("No US state data in current filter window.")
 
     st.divider()
 
